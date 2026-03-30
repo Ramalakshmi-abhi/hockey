@@ -1,15 +1,47 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { db } from '../firebase';
-import { ref, onValue } from 'firebase/database';
+import { db, auth } from '../firebase';
+import { ref, onValue, push } from 'firebase/database';
 import BottomNav from '../components/BottomNav';
 import Header from '../components/Header';
+import { generateTestMatchData } from '../utils/testDataGenerator';
 
 export default function Home() {
   const navigate = useNavigate();
   const [matches, setMatches] = useState([]);
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [currentUserId, setCurrentUserId] = useState(null);
+  const [creatingTestData, setCreatingTestData] = useState(false);
+
+  // Create test match data
+  const createTestMatch = async () => {
+    if (!currentUserId) {
+      alert('Please log in first');
+      return;
+    }
+    
+    try {
+      setCreatingTestData(true);
+      const testData = generateTestMatchData(currentUserId);
+      const matchRef = push(ref(db, 'matches'), testData);
+      console.log('✅ Test match created:', matchRef.key);
+      alert('✅ Test match created! Refresh the page to see it.');
+    } catch (error) {
+      console.error('Error creating test match:', error);
+      alert('❌ Error creating test match: ' + error.message);
+    } finally {
+      setCreatingTestData(false);
+    }
+  };
+
+  // Get current user on mount
+  useEffect(() => {
+    const unsubAuth = auth.onAuthStateChanged((user) => {
+      setCurrentUserId(user?.uid || null);
+    });
+    return () => unsubAuth();
+  }, []);
 
   useEffect(() => {
     const matchesRef = ref(db, 'matches');
@@ -23,8 +55,15 @@ export default function Home() {
           id,
           ...match
         }));
-        // Filter out ended matches for the live feed, or just show scheduled/live
-        const activeMatches = matchesArray.filter(m => m.status === 'live' || m.status === 'scheduled');
+        // Filter to show only current user's matches
+        let activeMatches = matchesArray.filter(m => {
+          // Only show matches created by the current user
+          if (currentUserId && m.createdBy && m.createdBy !== currentUserId) {
+            return false;
+          }
+          // Show live and scheduled matches (including those that should be live based on time)
+          return m.status === 'live' || m.status === 'scheduled';
+        });
         activeMatches.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         setMatches(activeMatches);
       } else {
@@ -58,10 +97,46 @@ export default function Home() {
     };
   }, []);
 
+  // Helper function to check if match is currently live
+  const isMatchLive = (match) => {
+    if (match.status === 'live') return true;
+    if (!match.schedule) return false;
+
+    const matchDate = match.schedule.matchDate; // Format: YYYY-MM-DD
+    const matchTime = match.schedule.matchTime; // Format: HH:MM
+
+    if (!matchDate || !matchTime) return false;
+
+    const today = new Date();
+    const todayDate = today.toISOString().split('T')[0]; // YYYY-MM-DD format
+    
+    // Only consider today's matches
+    if (matchDate !== todayDate) return false;
+
+    // Parse match time and current time
+    const [matchHours, matchMins] = matchTime.split(':').map(Number);
+    const matchMinutesTotal = matchHours * 60 + matchMins;
+    const currentMinutesTotal = today.getHours() * 60 + today.getMinutes();
+
+    // Consider live if match time is within 30 minutes before or after current time
+    return Math.abs(currentMinutesTotal - matchMinutesTotal) <= 30;
+  };
+
   return (
     <div className="min-h-screen bg-[#F4F6F9] pb-24">
       {/* App Header */}
       <Header />
+
+      {/* Debug: Create Test Data Button */}
+      <div className="px-4 pt-3">
+        <button
+          onClick={createTestMatch}
+          disabled={creatingTestData}
+          className="w-full bg-yellow-100 text-yellow-800 text-xs font-bold px-3 py-2 rounded-lg uppercase tracking-widest hover:bg-yellow-200 transition-colors disabled:opacity-50"
+        >
+          {creatingTestData ? 'Creating Test Match...' : '🐞 Create Test Match'}
+        </button>
+      </div>
 
       <div className="px-4 pt-6">
         {/* Live Matches Section Header */}

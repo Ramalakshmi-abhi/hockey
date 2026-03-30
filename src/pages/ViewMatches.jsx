@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { db } from '../firebase';
+import { db, auth } from '../firebase';
 import { ref, onValue } from 'firebase/database';
 import Header from '../components/Header';
 import BottomNav from '../components/BottomNav';
@@ -9,8 +9,17 @@ export default function ViewMatches() {
   const navigate = useNavigate();
   const [matches, setMatches] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [currentUserId, setCurrentUserId] = useState(null);
 
   const [activeTab, setActiveTab] = useState('LIVE');
+
+  // Get current user on mount
+  useEffect(() => {
+    const unsubAuth = auth.onAuthStateChanged((user) => {
+      setCurrentUserId(user?.uid || null);
+    });
+    return () => unsubAuth();
+  }, []);
 
   useEffect(() => {
     const matchesRef = ref(db, 'matches');
@@ -34,10 +43,48 @@ export default function ViewMatches() {
     return () => unsub();
   }, []);
 
+  // Helper function to check if match is currently live
+  const isMatchLive = (match) => {
+    if (match.status === 'live') return true;
+    if (!match.schedule) return false;
+
+    const matchDate = match.schedule.matchDate; // Format: YYYY-MM-DD
+    const matchTime = match.schedule.matchTime; // Format: HH:MM
+
+    if (!matchDate || !matchTime) return false;
+
+    const today = new Date();
+    const todayDate = today.toISOString().split('T')[0]; // YYYY-MM-DD format
+    
+    // Only consider today's matches
+    if (matchDate !== todayDate) return false;
+
+    // Parse match time and current time
+    const [matchHours, matchMins] = matchTime.split(':').map(Number);
+    const matchMinutesTotal = matchHours * 60 + matchMins;
+    const currentMinutesTotal = today.getHours() * 60 + today.getMinutes();
+
+    // Consider live if match time is within 30 minutes before or after current time
+    return Math.abs(currentMinutesTotal - matchMinutesTotal) <= 30;
+  };
+
   const filteredMatches = matches.filter(m => {
-    if (activeTab === 'LIVE') return m.status === 'live';
+    // Only show matches created by the current user
+    if (currentUserId && m.createdBy && m.createdBy !== currentUserId) {
+      return false;
+    }
+    
+    if (activeTab === 'LIVE') {
+      return m.status === 'live' || (m.status === 'scheduled' && isMatchLive(m));
+    }
     if (activeTab === 'FINISHED') return m.status === 'completed';
-    if (activeTab === 'UPCOMING') return m.status === 'upcoming' || m.status === 'pending' || m.status === 'scheduled' || (!m.status && !m.teamA?.score && !m.teamB?.score);
+    if (activeTab === 'UPCOMING') {
+      // Don't show in upcoming if it's live
+      if (m.status === 'live' || (m.status === 'scheduled' && isMatchLive(m))) {
+        return false;
+      }
+      return m.status === 'upcoming' || m.status === 'pending' || m.status === 'scheduled' || (!m.status && !m.teamA?.score && !m.teamB?.score);
+    }
     return true;
   });
 

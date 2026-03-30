@@ -128,6 +128,15 @@ export default function CreateTeam() {
     }));
   }
 
+  function handleToggleScorer(idx) {
+    setCurrentTeam(prev => ({
+      ...prev,
+      players: prev.players.map((p, i) => 
+        i === idx ? { ...p, isScorer: !p.isScorer } : p
+      ),
+    }));
+  }
+
   async function handleLogoChange(e) {
     const file = e.target.files[0];
     if (!file) return;
@@ -389,6 +398,16 @@ export default function CreateTeam() {
                 <span className="text-xs bg-white border border-[#00C9A7]/30 text-[#00C9A7] rounded-full px-2 py-0.5">{p.role}</span>
                 {p.isScorer && <span className="text-xs bg-[#00C9A7] text-white rounded-full px-2 py-0.5">Scorer</span>}
               </div>
+              <button 
+                onClick={() => handleToggleScorer(i)} 
+                className={`text-xs font-semibold px-3 py-1 rounded-full transition ${
+                  p.isScorer 
+                    ? 'bg-[#00C9A7] text-white hover:bg-[#00a889]' 
+                    : 'bg-white border border-[#00C9A7]/30 text-[#00C9A7] hover:bg-[#00C9A7]/10'
+                }`}
+              >
+                {p.isScorer ? 'Remove' : 'Assign'}
+              </button>
               <button onClick={() => handleRemovePlayer(i)} className="text-[#8A8FA3] hover:text-red-500 transition p-1">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
                   <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round"/>

@@ -56,7 +56,7 @@ export default function ScheduleMatch() {
         status: 'scheduled'
       });
       alert('Match Scheduled Successfully!');
-      navigate('/');
+      navigate('/dashboard');
     } catch (e) {
       console.error(e);
       setError('Failed to update match schedule.');
