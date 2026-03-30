@@ -1,9 +1,30 @@
 import { useNavigate, useLocation } from 'react-router-dom';
+import { getAuth, onAuthStateChanged } from 'firebase/auth';
+import { useState, useEffect } from 'react';
 
 export default function BottomNav() {
   const navigate = useNavigate();
   const location = useLocation();
   const path = location.pathname;
+  const [initials, setInitials] = useState('');
+
+  useEffect(() => {
+    const auth = getAuth();
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        const name = user.displayName || user.email || '';
+        if (user.displayName) {
+          const parts = name.trim().split(/\s+/);
+          setInitials(parts.map(p => p[0]).join('').toUpperCase().slice(0, 2));
+        } else {
+          setInitials(name.slice(0, 2).toUpperCase());
+        }
+      } else {
+        setInitials('GU');
+      }
+    });
+    return () => unsub();
+  }, []);
 
   const isActive = (paths) => paths.some(p => path.includes(p));
 
@@ -54,13 +75,13 @@ export default function BottomNav() {
           </svg>
         </button>
 
-        {/* Profile (GU) */}
+        {/* Profile */}
         <button 
           onClick={() => navigate('/profile')} 
           className="p-2 transition-transform hover:scale-105"
         >
           <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-[11px] font-black tracking-widest shadow-sm ${path === '/profile' ? 'bg-[#1A1A2E]' : 'bg-[#009270]'}`}>
-            GU
+            {initials}
           </div>
         </button>
 
