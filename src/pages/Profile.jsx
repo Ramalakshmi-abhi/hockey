@@ -1,24 +1,95 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { auth } from '../firebase';
+import { auth, db } from '../firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { ref as dbRef, get, update } from 'firebase/database';
 import BottomNav from '../components/BottomNav';
 
 export default function Profile() {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [photoURL, setPhotoURL] = useState('');
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   // Mapped Stats to exactly match screenshot
   const stats = { watched: 12, posts: 45, followers: '1.2k' };
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (currentUser) => {
+    const unsub = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
+
+      if (currentUser) {
+        setPhotoURL(currentUser.photoURL || '');
+        try {
+          const snapshot = await get(dbRef(db, `users/${currentUser.uid}`));
+          if (snapshot.exists() && snapshot.val()?.photoURL) {
+            setPhotoURL(snapshot.val().photoURL);
+          }
+        } catch (e) {
+          console.error('Failed to load profile image', e);
+        }
+      } else {
+        setPhotoURL('');
+      }
+
       setLoading(false);
     });
     return () => unsub();
   }, []);
+
+  const handleProfileImageUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    const readAsDataUrl = (inputFile) =>
+      new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(inputFile);
+      });
+
+    const optimizeImageToDataUrl = async (inputFile) => {
+      const rawDataUrl = await readAsDataUrl(inputFile);
+
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const maxDim = 320;
+          const ratio = Math.min(1, maxDim / img.width, maxDim / img.height);
+          const width = Math.max(1, Math.round(img.width * ratio));
+          const height = Math.max(1, Math.round(img.height * ratio));
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.7));
+        };
+        img.onerror = () => resolve(rawDataUrl);
+        img.src = rawDataUrl;
+      });
+    };
+
+    setUploadingPhoto(true);
+    try {
+      const fallbackDataUrl = await optimizeImageToDataUrl(file);
+      await update(dbRef(db, `users/${user.uid}`), {
+        photoURL: fallbackDataUrl,
+        updatedAt: Date.now()
+      });
+
+      setPhotoURL(fallbackDataUrl);
+    } catch (err) {
+      console.error('Profile image upload failed', err);
+      alert(`Failed to upload profile image: ${err?.message || 'Unknown error'}`);
+    } finally {
+      setUploadingPhoto(false);
+      e.target.value = '';
+    }
+  };
 
   const getInitials = (name) => {
     if (!name) return 'GU';
@@ -40,14 +111,38 @@ export default function Profile() {
             
             {/* Avatar block */}
             <div className="relative mb-3">
+               <input
+                 id="profile-image-upload"
+                 type="file"
+                 accept="image/*"
+                 className="hidden"
+                 onChange={handleProfileImageUpload}
+               />
                <div className="w-20 h-20 rounded-full border-[3px] border-[#009270] bg-white p-[2px]">
-                   <div className="w-full h-full rounded-full bg-[#009270] flex items-center justify-center text-white text-[28px] tracking-widest font-black">
-                       {user ? getInitials(user.displayName || user.email) : 'GU'}
-                   </div>
+                  {photoURL ? (
+                    <img
+                      src={photoURL}
+                      alt="Profile"
+                      className="w-full h-full rounded-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full rounded-full bg-[#009270] flex items-center justify-center text-white text-[28px] tracking-widest font-black">
+                      {user ? getInitials(user.displayName || user.email) : 'GU'}
+                    </div>
+                  )}
                </div>
-               <div className="absolute bottom-0 right-0 w-6 h-6 rounded-full bg-[#009270] border-2 border-white flex items-center justify-center text-white">
-                  <svg viewBox="0 0 24 24" fill="currentColor" className="w-[12px] h-[12px]"><path d="M12 15.2a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4z"/><path d="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/></svg>
-               </div>
+               <label
+                 htmlFor="profile-image-upload"
+                 className={`absolute bottom-0 right-0 w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-white ${
+                   uploadingPhoto ? 'bg-[#8A8FA3] cursor-wait' : 'bg-[#009270] cursor-pointer'
+                 }`}
+               >
+                  {uploadingPhoto ? (
+                    <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-[12px] h-[12px]"><path d="M12 15.2a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4z"/><path d="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/></svg>
+                  )}
+               </label>
             </div>
 
             <h2 className="text-xl font-black text-[#1A1A2E] tracking-tight text-center">
@@ -100,7 +195,7 @@ export default function Profile() {
                 <span className="text-xs font-bold text-[#1A1A2E]">Settings</span>
             </button>
 
-            <button onClick={() => navigate('/matches')} className="w-full bg-white px-6 py-4 flex items-center gap-4 hover:bg-gray-50 transition-colors">
+            <button onClick={() => navigate('/my-created-matches')} className="w-full bg-white px-6 py-4 flex items-center gap-4 hover:bg-gray-50 transition-colors">
                 <span className="text-[#F6B93B]"><svg viewBox="0 0 24 24" fill="currentColor" className="w-[18px] h-[18px]"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z" /></svg></span>
                 <span className="text-xs font-bold text-[#1A1A2E]">My Created Matches</span>
             </button>

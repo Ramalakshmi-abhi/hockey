@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth, db } from '../firebase';
 import { onAuthStateChanged, signOut, updateProfile, EmailAuthProvider, reauthenticateWithCredential, updatePassword } from 'firebase/auth';
-import { ref, set, get } from 'firebase/database';
+import { ref, update, get } from 'firebase/database';
 import BottomNav from '../components/BottomNav';
 
 export default function Profile() {
@@ -16,6 +16,8 @@ export default function Profile() {
   const [phone, setPhone] = useState('');
   const [role, setRole] = useState('Hockey Enthusiast');
   const [theme, setTheme] = useState('Light');
+  const [photoURL, setPhotoURL] = useState('');
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   // Password Change State
   const [isChangingPassword, setIsChangingPassword] = useState(false);
@@ -28,6 +30,7 @@ export default function Profile() {
       if (currentUser) {
         setDisplayName(currentUser.displayName || currentUser.email.split('@')[0]);
         setEmail(currentUser.email || '');
+        setPhotoURL(currentUser.photoURL || '');
         
         // Fetch additional user metadata from DB
         const userRef = ref(db, 'users/' + currentUser.uid);
@@ -37,6 +40,7 @@ export default function Profile() {
            if (data.phone) setPhone(data.phone);
            if (data.role) setRole(data.role);
            if (data.theme) setTheme(data.theme);
+           if (data.photoURL) setPhotoURL(data.photoURL);
         }
       }
       setLoading(false);
@@ -64,7 +68,7 @@ export default function Profile() {
       }
 
       // 3. Save extra user details (Phone, Role, Theme) to Realtime DB
-      await set(ref(db, 'users/' + user.uid), {
+      await update(ref(db, 'users/' + user.uid), {
          phone,
          role,
          theme,
@@ -85,6 +89,60 @@ export default function Profile() {
   const getInitials = (name) => {
     if (!name) return 'GU';
     return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
+  };
+
+  const handleProfileImageUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    const readAsDataUrl = (inputFile) =>
+      new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(inputFile);
+      });
+
+    const optimizeImageToDataUrl = async (inputFile) => {
+      const rawDataUrl = await readAsDataUrl(inputFile);
+
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const maxDim = 320;
+          const ratio = Math.min(1, maxDim / img.width, maxDim / img.height);
+          const width = Math.max(1, Math.round(img.width * ratio));
+          const height = Math.max(1, Math.round(img.height * ratio));
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.7));
+        };
+        img.onerror = () => resolve(rawDataUrl);
+        img.src = rawDataUrl;
+      });
+    };
+
+    setUploadingPhoto(true);
+    try {
+      const fallbackDataUrl = await optimizeImageToDataUrl(file);
+      await update(ref(db, 'users/' + user.uid), {
+        photoURL: fallbackDataUrl,
+        updatedAt: Date.now()
+      });
+
+      setPhotoURL(fallbackDataUrl);
+      alert('Profile image updated!');
+    } catch (err) {
+      console.error('Failed to upload profile image', err);
+      alert(`Image upload failed: ${err?.message || 'Unknown error'}`);
+    } finally {
+      setUploadingPhoto(false);
+      e.target.value = '';
+    }
   };
 
   if (loading) {
@@ -141,14 +199,34 @@ export default function Profile() {
         {/* Circular Avatar */}
         <div className="flex justify-center mb-8">
            <div className="relative">
+             <input
+               id="settings-avatar-upload"
+               type="file"
+               accept="image/*"
+               className="hidden"
+               onChange={handleProfileImageUpload}
+             />
              <div className="w-24 h-24 rounded-full border-[3px] border-[#009270] flex items-center justify-center bg-white p-1">
-                <div className="w-full h-full bg-[#009270] rounded-full flex items-center justify-center text-white text-3xl font-black">
-                   {getInitials(displayName)}
-                </div>
+                {photoURL ? (
+                  <img src={photoURL} alt="Profile" className="w-full h-full rounded-full object-cover" />
+                ) : (
+                  <div className="w-full h-full bg-[#009270] rounded-full flex items-center justify-center text-white text-3xl font-black">
+                    {getInitials(displayName)}
+                  </div>
+                )}
              </div>
-             <button className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-[#009270] border-2 border-white flex items-center justify-center text-white shadow-md hover:scale-110 transition-transform">
-                <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M12 15.2a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4z"/><path d="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/></svg>
-             </button>
+             <label
+               htmlFor="settings-avatar-upload"
+               className={`absolute bottom-0 right-0 w-8 h-8 rounded-full border-2 border-white flex items-center justify-center text-white shadow-md transition-transform ${
+                 uploadingPhoto ? 'bg-[#8A8FA3] cursor-wait' : 'bg-[#009270] cursor-pointer hover:scale-110'
+               }`}
+             >
+               {uploadingPhoto ? (
+                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+               ) : (
+                 <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M12 15.2a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4z"/><path d="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/></svg>
+               )}
+             </label>
            </div>
         </div>
 

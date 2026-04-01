@@ -30,7 +30,59 @@ export default function CreateTournament() {
   const [savedPlayers, setSavedPlayers] = useState([]);
   const [teamSquads, setTeamSquads] = useState({});
 
+  const normalizePlayer = (player) => {
+    if (typeof player === 'string') {
+      return { name: player.trim(), role: 'Forward' };
+    }
+    if (!player || typeof player !== 'object') {
+      return { name: '', role: 'Forward' };
+    }
+
+    const name =
+      (player.name || player.playerName || player.fullName || player.player || '').toString().trim();
+    const role =
+      (player.role || player.position || player.playerRole || 'Forward').toString().trim() || 'Forward';
+
+    return {
+      ...player,
+      name,
+      role
+    };
+  };
+
+  const normalizePlayers = (players) => {
+    const arr = Array.isArray(players)
+      ? players
+      : (players && typeof players === 'object' ? Object.values(players) : []);
+
+    return arr
+      .map(normalizePlayer)
+      .filter(p => p.name);
+  };
+
+  const buildPlayersByTeamMap = (squadsObj) => {
+    const map = {};
+    Object.entries(squadsObj || {}).forEach(([teamName, rawPlayers]) => {
+      const name = (teamName || '').trim();
+      if (!name) return;
+      map[name] = normalizePlayers(rawPlayers).map(p => p.name);
+    });
+    return map;
+  };
+
   useEffect(() => {
+    const normalizeSquads = (squadsObj) => {
+      if (!squadsObj || typeof squadsObj !== 'object') return {};
+      return Object.fromEntries(
+        Object.entries(squadsObj).map(([teamName, rawSquad]) => {
+          const squadArray = Array.isArray(rawSquad)
+            ? rawSquad
+            : (rawSquad && typeof rawSquad === 'object' ? Object.values(rawSquad) : []);
+          return [teamName, squadArray];
+        })
+      );
+    };
+
     const teamsRef = ref(db, 'saved_teams');
     const unsubscribeTeams = onValue(teamsRef, (snapshot) => {
       if (snapshot.exists()) {
@@ -52,7 +104,8 @@ export default function CreateTournament() {
     const squadsRef = ref(db, 'team_squads');
     const unsubscribeSquads = onValue(squadsRef, (snapshot) => {
       if (snapshot.exists()) {
-        setTeamSquads(prev => ({ ...prev, ...snapshot.val() }));
+        const normalized = normalizeSquads(snapshot.val());
+        setTeamSquads(prev => ({ ...prev, ...normalized }));
       }
     });
 
@@ -74,7 +127,8 @@ export default function CreateTournament() {
           }
         });
         
-        setTeamSquads(prev => ({ ...discoveredSquads, ...prev }));
+        const normalizedDiscovered = normalizeSquads(discoveredSquads);
+        setTeamSquads(prev => ({ ...normalizedDiscovered, ...prev }));
       }
     });
 
@@ -113,12 +167,23 @@ export default function CreateTournament() {
   };
 
   const addTeamToGroup = (gIdx, teamName) => {
-    if (!teamName) return;
-    const newGroups = [...groups];
-    if (!newGroups[gIdx].teams.some(t => t.name === teamName)) {
-      newGroups[gIdx].teams.push({ name: teamName });
-      setGroups(newGroups);
-    }
+    const normalizedTeam = (teamName || '').trim();
+    if (!normalizedTeam) return;
+
+    setGroups(prevGroups => prevGroups.map((group, idx) => {
+      if (idx !== gIdx) return group;
+
+      const alreadyExists = group.teams.some(
+        t => (t.name || '').trim().toLowerCase() === normalizedTeam.toLowerCase()
+      );
+
+      if (alreadyExists) return group;
+
+      return {
+        ...group,
+        teams: [...group.teams, { name: normalizedTeam }]
+      };
+    }));
   };
 
   const handleAddPlayer = (player) => {
@@ -140,10 +205,7 @@ export default function CreateTournament() {
     const foundKey = Object.keys(teamSquads).find(k => k.trim().toLowerCase() === name.toLowerCase());
     
     if (foundKey) {
-      let squad = teamSquads[foundKey];
-      if (squad && typeof squad === 'object' && !Array.isArray(squad)) {
-        squad = Object.values(squad);
-      }
+      const squad = normalizePlayers(teamSquads[foundKey]);
       
       if (Array.isArray(squad) && squad.length > 0) {
         setTeams(prev => {
@@ -151,9 +213,7 @@ export default function CreateTournament() {
           if (updated[index]) {
             updated[index] = {
               ...updated[index],
-              players: squad.map(p => 
-                typeof p === 'string' ? { name: p, role: 'Forward' } : { ...p }
-              )
+              players: squad
             };
             return updated;
           }
@@ -161,6 +221,19 @@ export default function CreateTournament() {
         });
       }
     }
+  };
+
+  const getSquadPlayerNames = (teamName) => {
+    if (!teamName || !teamSquads) return [];
+    return normalizePlayers(teamSquads[teamName]).map(p => p.name);
+  };
+
+  const getCurrentTeamPlayerNames = () => {
+    return normalizePlayers(teams[currentTeamIdx]?.players).map(p => p.name);
+  };
+
+  const getCurrentTeamPlayers = () => {
+    return normalizePlayers(teams[currentTeamIdx]?.players);
   };
 
   const updateTeamName = (val) => {
@@ -187,9 +260,19 @@ export default function CreateTournament() {
   const handleFinish = async () => {
     setLoading(true);
     try {
+      const normalizedGroups = groups.map(group => ({
+        ...group,
+        teams: group.teams.filter(t => (t.name || '').trim())
+      }));
+      const allGroupTeams = [...new Set(
+        normalizedGroups.flatMap(group => group.teams.map(t => t.name.trim()))
+      )].map(name => ({ name }));
+
       await push(ref(db, 'tournaments'), {
         ...tourneyInfo,
-        teams,
+        teams: tourneyInfo.type === 'groups' ? allGroupTeams : teams,
+        groups: tourneyInfo.type === 'groups' ? normalizedGroups : [],
+        teamCount: tourneyInfo.type === 'groups' ? allGroupTeams.length : teams.length,
         status: 'upcoming',
         createdAt: serverTimestamp(),
         createdBy: auth.currentUser?.uid || 'guest'
@@ -203,6 +286,7 @@ export default function CreateTournament() {
         }
       });
       await set(ref(db, 'team_squads'), newSquads);
+      await set(ref(db, 'saved_players_by_team'), buildPlayersByTeamMap(newSquads));
       
       navigate('/tournaments');
     } catch (err) {
@@ -379,7 +463,7 @@ export default function CreateTournament() {
                     value={teams[currentTeamIdx]?.name}
                     onChange={(val) => updateTeamName(val)}
                   />
-                  {teamSquads[teams[currentTeamIdx]?.name] && teams[currentTeamIdx].players.length === 0 && (
+                  {teamSquads[teams[currentTeamIdx]?.name] && getCurrentTeamPlayers().length === 0 && (
                     <button 
                       onClick={() => loadSquadForTeam(teams[currentTeamIdx].name, currentTeamIdx)}
                       className="mt-3 text-[10px] font-bold text-[#00C9A7] flex items-center gap-1.5 animate-pulse"
@@ -420,9 +504,9 @@ export default function CreateTournament() {
                 onAdd={handleAddPlayer} 
                 savedPlayers={[...new Set([
                   // Ensure we ONLY pull the names string from the squad objects
-                  ...(teamSquads[teams[currentTeamIdx]?.name] || []).map(p => typeof p === 'string' ? p : p.name),
+                  ...getSquadPlayerNames(teams[currentTeamIdx]?.name),
                   ...savedPlayers,
-                  ...teams[currentTeamIdx]?.players.map(p => p.name)
+                  ...getCurrentTeamPlayerNames()
                 ].filter(Boolean))]}
                />
             </div>
@@ -431,11 +515,11 @@ export default function CreateTournament() {
             <div className="card p-6">
                <p className="text-[10px] font-black text-[#1A1A2E] uppercase tracking-wider mb-6 flex justify-between items-center">
                   Squad — Team {currentTeamIdx + 1}
-                  <span className="text-[#00C9A7]">{teams[currentTeamIdx]?.players.length}/11 Players</span>
+                  <span className="text-[#00C9A7]">{getCurrentTeamPlayers().length}/11 Players</span>
                </p>
                
                <div className="space-y-3">
-                 {teams[currentTeamIdx]?.players.map((p, i) => (
+                 {getCurrentTeamPlayers().map((p, i) => (
                     <div key={i} className="flex items-center gap-3 p-4 bg-[#F4F6F9] rounded-[1.5rem] text-sm animate-fade-in">
                        <span className="font-black text-[#00C9A7] w-4">{i + 1}.</span>
                        <div className="flex-1">
@@ -447,9 +531,9 @@ export default function CreateTournament() {
                        </button>
                     </div>
                  ))}
-                 {Array.from({ length: 11 - (teams[currentTeamIdx]?.players?.length || 0) }).map((_, i) => (
+                 {Array.from({ length: Math.max(0, 11 - getCurrentTeamPlayers().length) }).map((_, i) => (
                     <div key={i} className="flex items-center gap-3 p-4 border-2 border-dashed border-[#E8EAF0] rounded-[1.5rem] opacity-40">
-                       <span className="font-black text-gray-300 w-4">{(teams[currentTeamIdx]?.players?.length || 0) + i + 1}.</span>
+                       <span className="font-black text-gray-300 w-4">{getCurrentTeamPlayers().length + i + 1}.</span>
                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest italic">Empty Slot</p>
                     </div>
                  ))}
@@ -478,7 +562,7 @@ export default function CreateTournament() {
 
         {/* Step 3: Groups Flow */}
         {step === 3 && tourneyInfo.type === 'groups' && (
-          <div className="slide-in space-y-6">
+          <div className="slide-in space-y-6 pb-28">
              {groups.map((group, gIdx) => (
                 <div key={gIdx} className="card">
                    <div className="bg-white px-5 py-4 border-b border-gray-50 flex items-center justify-between">
@@ -535,9 +619,13 @@ export default function CreateTournament() {
                             </div>
                             <button 
                               onClick={() => {
-                                const newGroups = [...groups];
-                                newGroups[gIdx].teams.splice(tIdx, 1);
-                                setGroups(newGroups);
+                                setGroups(prevGroups => prevGroups.map((group, idx) => {
+                                  if (idx !== gIdx) return group;
+                                  return {
+                                    ...group,
+                                    teams: group.teams.filter((_, idx2) => idx2 !== tIdx)
+                                  };
+                                }));
                               }}
                               className="p-1.5 text-gray-300 hover:text-red-500 transition-colors"
                             >

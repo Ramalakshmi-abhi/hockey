@@ -8,6 +8,7 @@ export default function Tournaments() {
   const navigate = useNavigate();
   const [tournaments, setTournaments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [readError, setReadError] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   
   // Form State
@@ -15,9 +16,25 @@ export default function Tournaments() {
   const [location, setLocation] = useState('');
   const [startDate, setStartDate] = useState('');
 
+  const getTeamsForTournament = (t) => {
+    if (Array.isArray(t.teams) && t.teams.length > 0) return t.teams;
+    if (!Array.isArray(t.groups)) return [];
+
+    const names = [...new Set(
+      t.groups.flatMap(group =>
+        Array.isArray(group?.teams)
+          ? group.teams.map(team => (team?.name || '').trim()).filter(Boolean)
+          : []
+      )
+    )];
+
+    return names.map(teamName => ({ name: teamName }));
+  };
+
   useEffect(() => {
     const tRef = ref(db, 'tournaments');
     const unsub = onValue(tRef, (snap) => {
+      setReadError('');
       const data = snap.val();
       if (data) {
         const tList = Object.entries(data).map(([id, val]) => ({
@@ -28,6 +45,11 @@ export default function Tournaments() {
       } else {
         setTournaments([]);
       }
+      setLoading(false);
+    }, (err) => {
+      console.error('Failed to load tournaments', err);
+      setReadError(err?.message || 'Permission denied while loading tournaments.');
+      setTournaments([]);
       setLoading(false);
     });
     return () => unsub();
@@ -78,6 +100,10 @@ export default function Tournaments() {
           <div className="flex justify-center py-20">
             <div className="w-8 h-8 border-3 border-[#00C9A7] border-t-transparent rounded-full animate-spin" />
           </div>
+        ) : readError ? (
+          <div className="bg-red-50 border border-red-200 text-red-600 rounded-xl px-4 py-3 mb-4 text-sm font-medium">
+            {readError}
+          </div>
         ) : tournaments.length === 0 ? (
           <div className="flex flex-col items-center py-20 text-center">
             <div className="text-5xl mb-4 select-none opacity-50">🏆</div>
@@ -94,15 +120,23 @@ export default function Tournaments() {
           </div>
         ) : (
           <div className="flex flex-col gap-4">
-            {tournaments.map(t => (
-              <div key={t.id} className="bg-white p-5 rounded-3xl shadow-sm border border-[#E8EAF0] relative overflow-hidden animate-slide-in">
+            {tournaments.map(t => {
+              const tournamentTeams = getTeamsForTournament(t);
+              const teamCount = tournamentTeams.length || t.teamCount || 0;
+
+              return (
+              <div
+                key={t.id}
+                onClick={() => navigate(`/tournaments/${t.id}`)}
+                className="bg-white p-5 rounded-3xl shadow-sm border border-[#E8EAF0] relative overflow-hidden animate-slide-in cursor-pointer hover:shadow-lg transition-all"
+              >
                 <div className={`absolute top-0 left-0 w-1.5 h-full ${t.status === 'live' ? 'bg-[#E53E3E]' : 'bg-[#00C9A7]'}`} />
                 
                 <div className="flex justify-between items-start mb-3">
                   <div>
                     <h3 className="font-black text-[#1A1A2E] text-lg leading-tight uppercase tracking-tight mb-1">{t.name}</h3>
                     <p className="text-[10px] font-bold text-[#00C9A7] uppercase tracking-widest bg-[#E0FBF5] inline-block px-2 py-0.5 rounded-full">
-                      {t.teamCount} Teams
+                      {teamCount} Teams
                     </p>
                   </div>
                   <span className={`text-[9px] font-black uppercase tracking-[0.2em] px-3 py-1.5 rounded-xl ${
@@ -114,9 +148,9 @@ export default function Tournaments() {
                 </div>
 
                 {/* Teams List Summary */}
-                {t.teams && (
+                {tournamentTeams.length > 0 && (
                   <div className="mb-4 flex flex-wrap gap-1.5">
-                    {t.teams.map((team, idx) => (
+                    {tournamentTeams.map((team, idx) => (
                       <span key={idx} className="text-[10px] bg-gray-50 text-gray-500 px-3 py-1 rounded-lg border border-gray-100 font-bold uppercase transition-all hover:border-[#00C9A7]/30 hover:text-[#1A1A2E]">
                         {team.name || `Team ${idx + 1}`}
                       </span>
@@ -140,7 +174,8 @@ export default function Tournaments() {
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

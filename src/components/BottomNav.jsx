@@ -27,6 +27,7 @@ export default function BottomNav() {
   }, []);
 
   const isActive = (paths) => paths.some(p => path.includes(p));
+  const isCreateActive = isActive(['/create-menu', '/create', '/create-tournament', '/create_tournament']);
 
   return (
     <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[480px] bg-white shadow-[0_-4px_24px_-8px_rgba(0,0,0,0.08)] border-t border-[#E8EAF0] z-50">
@@ -56,8 +57,12 @@ export default function BottomNav() {
         {/* Create (+) Squircle FAB */}
         <div className="flex justify-center items-center px-2">
           <button 
-            onClick={() => navigate('/create')} 
-            className="w-[52px] h-[52px] bg-[#009270] rounded-[18px] flex items-center justify-center text-white shadow-lg shadow-[#009270]/20 hover:scale-105 active:scale-95 transition-transform"
+            onClick={() => navigate('/create-menu')} 
+            className={`w-[52px] h-[52px] rounded-[18px] flex items-center justify-center text-white shadow-lg hover:scale-105 active:scale-95 transition-transform ${
+              isCreateActive
+                ? 'bg-[#00A98F] shadow-[#00A98F]/30'
+                : 'bg-[#009270] shadow-[#009270]/20'
+            }`}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
               <path d="M12 5v14M5 12h14" />
