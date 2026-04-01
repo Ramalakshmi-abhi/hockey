@@ -762,12 +762,6 @@ export default function CreateTeam() {
     }
 
     const currentUser = auth.currentUser;
-    if (!currentUser?.uid) {
-      setError('Please log in first. Match creation is blocked for guest users.');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
-
     setError('');
     setLoading(true);
     
@@ -783,8 +777,8 @@ export default function CreateTeam() {
         time: '00:00',
         events: [],
         createdAt: Date.now(),
-        createdBy: currentUser.uid,
-        authorizedReaders: { [currentUser.uid]: true },
+        createdBy: currentUser?.uid || 'guest_' + Math.random().toString(36).slice(2, 10),
+        authorizedReaders: currentUser?.uid ? { [currentUser.uid]: true } : {},
       };
       
       const matchRef = push(ref(db, 'matches'));
